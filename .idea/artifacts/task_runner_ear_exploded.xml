@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="exploded-ear" name="task-runner:ear exploded">
+    <output-path>$PROJECT_DIR$/out/artifacts/task_runner_ear_exploded</output-path>
+    <root id="root">
+      <element id="javaee-facet-resources" facet="task-runner/javaeeApplication/javaEEApplication" />
+    </root>
+  </artifact>
+</component>
