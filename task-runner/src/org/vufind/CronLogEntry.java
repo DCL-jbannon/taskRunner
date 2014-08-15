@@ -1,5 +1,7 @@
 package org.vufind;
 
+import org.slf4j.Logger;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -7,17 +9,25 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Date;
 
-import org.apache.log4j.Logger;
-
 public class CronLogEntry {
 	private Long logEntryId = null;
-	private Date startTime;
-	private Date lastUpdate; //The last time the log entry was updated so we can tell if a process is stuck 
-	private Date endTime;
+	private Date startTime = null;
+	private Date lastUpdate = null; //The last time the log entry was updated so we can tell if a process is stuck
+	private Date endTime = null;
 	private ArrayList<String> notes = new ArrayList<String>();
-	public CronLogEntry(){
+	private CronLogEntry(){
 		this.startTime = new Date();
 	}
+
+    private static CronLogEntry singleton = null;
+    public static CronLogEntry getCronLogEntry() {
+        if(singleton==null) {
+            singleton = new CronLogEntry();
+        }
+
+        return singleton;
+    }
+
 	public Date getLastUpdate() {
 		lastUpdate = new Date();
 		return lastUpdate;

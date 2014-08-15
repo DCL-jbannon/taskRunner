@@ -10,24 +10,28 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 
-import org.apache.log4j.Logger;
 import org.ini4j.Ini;
 import org.ini4j.Profile.Section;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.vufind.CopyNoOverwriteResult;
-import org.vufind.CronLogEntry;
-import org.vufind.CronProcessLogEntry;
-import org.vufind.IProcessHandler;
-import org.vufind.Util;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.vufind.*;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
+import org.vufind.config.sections.EContentConfigOptions;
 
 public class Packaging implements IProcessHandler{
+    private Logger logger = LoggerFactory.getLogger(CirculationProcess.class);
+
 	private CronProcessLogEntry processLog;
 	private Connection vufindConn;
-	private Logger logger; 
 	private String vufindUrl;
 	private String packagingUrl;
 	private File packagingFTP;
@@ -52,15 +56,17 @@ public class Packaging implements IProcessHandler{
 	private PreparedStatement	updateAcsIdForItem;
 	
 	@Override
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) {
-		this.vufindConn = vufindConn;
+	public void doCronProcess(DynamicConfig config) {
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        this.vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+
 		processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Packaging eContent");
 		processLog.saveToDatabase(vufindConn, logger);
-		this.logger = logger;
+
 		logger.info("Packaging eContent");
 		
 		try{
-			if (!initializePackaging(configIni, econtentConn, logger)){
+			if (!initializePackaging(config)){
 				return;
 			}
 			
@@ -78,11 +84,11 @@ public class Packaging implements IProcessHandler{
 		}
 	}
 
-	private boolean initializePackaging(Ini configIni, Connection econtentConn, Logger logger) {
-		vufindUrl = Util.cleanIniValue(configIni.get("Site", "url"));
+	private boolean initializePackaging(DynamicConfig config) {
+		vufindUrl = config.getString(BasicConfigOptions.VUFIND_URL);
 		
 		//Load configuration
-		String rootFTPDir = Util.cleanIniValue(configIni.get("EContent", "rootFTPDir"));
+		String rootFTPDir = config.getString(EContentConfigOptions.ROOT_FTP_DIR);
 		if (rootFTPDir == null || rootFTPDir.length() == 0){
 			logger.error("Could not find rootFTPDir in EContent section of the config file");
 			processLog.addNote("Could not find rootFTPDir in EContent section of the config file, stopping process.");
@@ -97,8 +103,8 @@ public class Packaging implements IProcessHandler{
 			processLog.incErrors();
 			return false;
 		}
-		
-		String econtentLibraryDir = Util.cleanIniValue(configIni.get("EContent", "library"));
+
+		String econtentLibraryDir = config.getString(EContentConfigOptions.LIBRARY);
 		if (econtentLibraryDir == null || econtentLibraryDir.length() == 0){
 			logger.error("Could not find library in EContent section of the config file");
 			processLog.addNote("Could not find library in EContent section of the config file, stopping process.");
@@ -113,21 +119,21 @@ public class Packaging implements IProcessHandler{
 			processLog.incErrors();
 			return false;
 		}
-		
-		distributorId = Util.cleanIniValue(configIni.get("EContent", "distributorId"));
+
+		distributorId = Util.cleanIniValue(config.getString(EContentConfigOptions.DISTRIBUTOR_ID));
 		if (distributorId == null || distributorId.length() == 0){
 			logger.warn("Could not find distributorId in EContent section of the config file");
 			processLog.addNote("Warning, could not find distributorId in EContent section of the config file, providing a distributorId is required for connection to an Adobe Content System.");
 		}
-		
-		packagingUrl = Util.cleanIniValue(configIni.get("EContent", "packagingURL"));
+
+		packagingUrl = Util.cleanIniValue(config.getString(EContentConfigOptions.PACKAGING_URL));
 		if (packagingUrl == null || packagingUrl.length() == 0){
 			logger.warn("Could not find packagingURL in EContent section of the config file");
 			processLog.addNote("Warning, could not find packagingURL in EContent section of the config file, you will not be able to add files to an Adobe Content Server.");
 			packagingUrl = null;
 		}
 		
-		String packagingFTPDir = Util.cleanIniValue(configIni.get("EContent", "packagingFTP"));
+		String packagingFTPDir = Util.cleanIniValue(config.getString(EContentConfigOptions.PACKAGING_FTP));
 		if (packagingFTPDir == null || packagingFTPDir.length() == 0){
 			logger.warn("Could not find packagingFTP in EContent section of the config file");
 			processLog.addNote("Warning, could not find packagingFTP in EContent section of the config file, you will not be able to add files to an Adobe Content Server.");
@@ -139,24 +145,24 @@ public class Packaging implements IProcessHandler{
 				processLog.addNote(packagingFTP + " does not exist, you will not be able to add files to an Adobe Content Server.");
 			}
 		}
-		
-		activePackagingSource = configIni.get("EContent", "activePackagingSource");
+
+		activePackagingSource = config.getString(EContentConfigOptions.ACTIVE_PACKAGING_SOURCE);
 		if (activePackagingSource == null || activePackagingSource.length() == 0){
 			logger.warn("Could not find activePackagingSource in EContent section of the config file");
 			processLog.addNote("Warning, could not find activePackagingSource in EContent section of the config file, providing a packaging source will allow files to be processed on test and production systems.");
 		}
-		
-		String allPackagingSourcesStr = configIni.get("EContent", "allPackagingSources");
-		if (allPackagingSourcesStr == null || allPackagingSourcesStr.length() == 0){
+
+        allPackagingSources = (String[])config.getList(EContentConfigOptions.ALL_PACKAGING_SOURCES).toArray(allPackagingSources);
+		if (allPackagingSources == null || allPackagingSources.length == 0){
 			logger.warn("Could not find allPackagingSources in EContent section of the config file");
 			processLog.addNote("Warning, could not find allPackagingSources in EContent section of the config file, providing a packaging source will allow files to be processed on test and production systems.");
 			allPackagingSources = new String[0];
-		}else{
-			allPackagingSources = allPackagingSourcesStr.split(",");
 		}
 		
 		//Setup prepared statements
 		try {
+            Connection econtentConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+
 			//Statements for updating eContent
 			doesItemExistForRecord = econtentConn.prepareStatement("SELECT id, filename, acsId from econtent_item where recordId = ? and item_type = ? and notes = ?");
 			updateItemFilename = econtentConn.prepareStatement("UPDATE econtent_item set filename = ? where id = ?");
@@ -574,4 +580,9 @@ public class Packaging implements IProcessHandler{
 		}
 		return null;
 	}
+
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[]{BasicConfigOptions.values()[0], EContentConfigOptions.values()[0]});
+    }
 }

@@ -1,5 +1,7 @@
 package org.vufind;
 
+import org.slf4j.Logger;
+
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -7,17 +9,15 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Date;
 
-import org.apache.log4j.Logger;
-
 public class CronProcessLogEntry {
-	private Long cronLogId;
-	private Long logProcessId;
+	private Long cronLogId = null;
+	private Long logProcessId = null;
 	private String processName = null;
-	private Date startTime;
-	private Date lastUpdate; //The last time the log entry was updated so we can tell if a process is stuck 
-	private Date endTime;
-	private int numErrors;
-	private int numUpdates; 
+	private Date startTime = null;
+	private Date lastUpdate = null; //The last time the log entry was updated so we can tell if a process is stuck
+	private Date endTime = null;
+	private int numErrors=0;
+	private int numUpdates=0;
 	private ArrayList<String> notes = new ArrayList<String>();
 	
 	public CronProcessLogEntry(Long cronLogId, String processName){
@@ -83,6 +83,7 @@ public class CronProcessLogEntry {
 			if (!statementsPrepared){
 				insertLogEntry = vufindConn.prepareStatement("INSERT into cron_process_log (cronId, processName, startTime) VALUES (?, ?, ?)", PreparedStatement.RETURN_GENERATED_KEYS);
 				updateLogEntry = vufindConn.prepareStatement("UPDATE cron_process_log SET lastUpdate = ?, endTime = ?, numErrors = ?, numUpdates = ?, notes = ? WHERE id = ?", PreparedStatement.RETURN_GENERATED_KEYS);
+                statementsPrepared = true;
 			}
 		} catch (SQLException e) {
 			logger.error("Error creating prepared statements to update log", e);

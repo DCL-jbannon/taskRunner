@@ -5,34 +5,45 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 import java.util.Properties;
 
 import javax.mail.*;
 import javax.mail.internet.InternetAddress;
 import javax.mail.internet.MimeMessage;
 
-import org.apache.log4j.Logger;
 import org.ini4j.Ini;
 import org.ini4j.Profile.Section;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.vufind.ConnectionProvider;
 import org.vufind.CronLogEntry;
 import org.vufind.CronProcessLogEntry;
 import org.vufind.IProcessHandler;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
+import org.vufind.config.sections.CirculationProcessOptions;
 
 
 public class CirculationProcess implements IProcessHandler{
+    private Logger logger = LoggerFactory.getLogger(CirculationProcess.class);
 
-	private Logger logger;
-	private CronProcessLogEntry processLog;
+    private DynamicConfig config = null;
+
+	private CronProcessLogEntry processLog = null;
 	private Connection vufindConn = null;
 	private Connection econtentConn = null;
 	
 	@Override
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) {
-		this.logger = logger;
-		this.vufindConn = vufindConn;
-		this.econtentConn = econtentConn;
-		
+	public void doCronProcess(DynamicConfig config) {
+        this.config = config;
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+        econtentConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.E_CONTENT);
+
 		processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "eContent circulation");
 		processLog.saveToDatabase(vufindConn, logger);
 		logger.info("Running circulation process for eContent");
@@ -456,12 +467,16 @@ public class CirculationProcess implements IProcessHandler{
 	}
 
 	private boolean sendNotice(String email, String emailSubject, String emailBody, Logger logger) {
+        if(!config.getBool(CirculationProcessOptions.SHOULD_EMAIL_NOTICES)) {
+            logger.info("Skipping sending notic to " + email);
+            return true;
+        }
 		logger.info("Sending notice to " + email);
 		logger.info("Email Subject: " + emailSubject);
 		logger.info("Email Body: " + emailBody);
 		
-		String host = "dirsync2.dcl.lan";
-		String from = "notices@dclibraries.microsoftonline.com";
+		String host = config.getString(CirculationProcessOptions.EMAIL_HOST);
+		String from = config.getString(CirculationProcessOptions.EMAIL_NOTICE_FROM_ADDRESS);
 		
 		// Get system properties
 		Properties props = System.getProperties();
@@ -587,4 +602,8 @@ public class CirculationProcess implements IProcessHandler{
 		
 	}
 
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[]{BasicConfigOptions.values()[0]});
+    }
 }

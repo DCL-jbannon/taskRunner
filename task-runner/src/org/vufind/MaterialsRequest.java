@@ -5,13 +5,17 @@ import java.net.URL;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.Arrays;
+import java.util.List;
 
-import org.apache.log4j.Logger;
-import org.ini4j.Ini;
-import org.ini4j.Profile.Section;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
 
 /**
  * Handles processing background tasks for Materials Requests including 
@@ -37,24 +41,22 @@ import org.json.JSONObject;
  * 
  */
 public class MaterialsRequest implements IProcessHandler{
+    private Logger logger = LoggerFactory.getLogger(MaterialsRequest.class);
+
 	private Connection vufindConn = null;
 	private CronProcessLogEntry processLog;
 	private String vufindUrl;
-	private Logger logger;
-	private String installPath;
-	private String libraryName;
-	private String circulationPhone;
-	private String circulationEmail;
-	private String circulationUrl;
-	private String emailFrom;
 	
 	@Override
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) {
+	public void doCronProcess(DynamicConfig config) {
+
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+
 		processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Materials Request");
 		processLog.saveToDatabase(vufindConn, logger);
-		this.logger = logger;
-		this.vufindConn = vufindConn;
-		if (!loadConfig(configIni, logger)){
+
+		if (!loadConfig(config)){
 			return;
 		}
 		
@@ -170,37 +172,15 @@ public class MaterialsRequest implements IProcessHandler{
 		}
 	}
 	
-	protected boolean loadConfig(Ini ini, Logger logger) {
-		vufindUrl = Util.cleanIniValue(ini.get("Site", "url"));
-		
-		installPath = ini.get("Site", "installPath");
-		if (installPath == null || installPath.length() == 0) {
-			logger.error("Local path to vufind installation not found in General Settings.  Please specify location in local key.");
-			return false;
-		}
-		emailFrom = ini.get("MaterialsRequest", "emailFrom");
-		if (emailFrom == null || emailFrom.length() == 0) {
-			logger.error("Email From address not found in Process Settings.  Please specify host in emailPort key.");
-			return false;
-		}
-		
-		libraryName = ini.get("Site", "libraryName");
-		if (libraryName == null || libraryName.length() == 0) {
-			logger.warn("Library Name not found in Process Settings.  Please specify add libraryName key.");
-		}
-		circulationPhone = ini.get("MaterialsRequest", "phone");
-		if (circulationPhone == null || circulationPhone.length() == 0) {
-			logger.warn("Circulation Department Phone Number not found in Process Settings.  Please specify add circulationPhone key.");
-		}
-		circulationEmail = ini.get("MaterialsRequest", "email");
-		if (circulationEmail == null || circulationEmail.length() == 0) {
-			logger.warn("Circulation Department Email not found in Process Settings.  Please specify add circulationPhone key.");
-		}
-		circulationUrl = ini.get("MaterialsRequest", "url");
-		if (circulationUrl == null || circulationUrl.length() == 0) {
-			logger.warn("Circulation Department not found in Process Settings.  Please specify add circulationUrl key.");
-		}
+	protected boolean loadConfig(DynamicConfig config) {
+
+		vufindUrl = config.getString(BasicConfigOptions.VUFIND_URL);
+
 		return true;
 	}
 
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[]{BasicConfigOptions.values()[0]});
+    }
 }

@@ -19,18 +19,20 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
-import org.apache.log4j.Logger;
 import org.ini4j.Profile.Section;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.vufind.Util;
 
 public abstract class ImportBase {
+    private Logger logger = LoggerFactory.getLogger(CirculationProcess.class);
 
 	protected String databaseConnectionInfo;
 	protected String sourceDirectory;
 	protected String libraryDirectory;
-	protected Logger logger;
+
 	protected String coverDirectory;
 	protected String tempDirectory;
 	protected String resultsDirectory;

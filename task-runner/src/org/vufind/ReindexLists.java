@@ -3,10 +3,16 @@ package org.vufind;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.Arrays;
+import java.util.List;
 
-import org.apache.log4j.Logger;
 import org.ini4j.Ini;
 import org.ini4j.Profile.Section;
+import org.slf4j.Logger;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
+import org.vufind.config.sections.ReindexListsOptions;
 
 public class ReindexLists implements IProcessHandler {
 	private Logger logger;
@@ -17,34 +23,34 @@ public class ReindexLists implements IProcessHandler {
 	private String baseSolrUrl;
 	
 	@Override
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) {
+	public void doCronProcess(DynamicConfig config) {
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        Connection vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+
 		processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Reindex Lists");
 		processLog.saveToDatabase(vufindConn, logger);
 		try {
 			this.logger = logger;
-			vufindUrl = configIni.get("Site", "url");
-			if (processSettings.get("reindexBiblio") != null){
-				reindexBiblio = Boolean.parseBoolean(processSettings.get("reindexBiblio"));
-			}else{
-				reindexBiblio = true;
-			}
-			baseSolrUrl = processSettings.get("baseSolrUrl");
+
+			vufindUrl = config.getString(BasicConfigOptions.VUFIND_URL);
+
+            reindexBiblio = config.getBool(ReindexListsOptions.REINDEX_BIBLIO);
+            reindexBiblio2 = config.getBool(ReindexListsOptions.REINDEX_BIBLIO2);
+
+			baseSolrUrl = config.getString(BasicConfigOptions.BASE_SOLR_URL);
 			if (baseSolrUrl == null){
 				processLog.incErrors();
 				processLog.addNote("baseSolrUrl not found in configuration options, please specify as part of process settings");
 				return;
 			}
-			
-			//Clear the existing lists from the solr index
-			if (reindexBiblio){
-				clearLists("biblio");
-			}
-			if (reindexBiblio2){
-				clearLists("biblio2");
-			}
+
 			
 			//Get a list of all public lists
-			PreparedStatement getPublicListsStmt = vufindConn.prepareStatement("SELECT user_list.id, count(user_resource.id) as num_titles FROM user_list INNER JOIN user_resource on list_id = user_list.id WHERE public = 1 group by user_list.id");
+			PreparedStatement getPublicListsStmt = vufindConn.prepareStatement(
+                    "SELECT user_list.id, count(user_resource.id) as num_titles " +
+                    "FROM user_list INNER JOIN user_resource on list_id = user_list.id " +
+                    "WHERE public = 1 " +
+                    "GROUP BY user_list.id");
 			ResultSet publicListsRs = getPublicListsStmt.executeQuery();
 			while (publicListsRs.next()){
 				Long listId = publicListsRs.getLong("id");
@@ -68,7 +74,12 @@ public class ReindexLists implements IProcessHandler {
 		}
 	}
 
-	private void reindexList(String string, Long listId) {
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[] {BasicConfigOptions.PROCESSES, ReindexListsOptions.REINDEX_BIBLIO});
+    }
+
+    private void reindexList(String string, Long listId) {
 		URLPostResponse response = Util.getURL(vufindUrl + "/MyResearch/MyList/" + listId + "?myListActionHead=reindex", logger);
 		if (!response.isSuccess()){
 			processLog.addNote("Error reindexing list " + response.getMessage());

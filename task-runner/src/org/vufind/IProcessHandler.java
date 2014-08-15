@@ -3,11 +3,12 @@ package org.vufind;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.List;
 
-import org.apache.log4j.Logger;
-import org.ini4j.Ini;
-import org.ini4j.Profile.Section;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
 
 public interface IProcessHandler {
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) throws SQLException, IOException;
+	public void doCronProcess(DynamicConfig config) throws SQLException, IOException;
+    public List<I_ConfigOption> getNeededConfigOptions();
 }

@@ -6,26 +6,30 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Date;
+import java.util.*;
 
-import org.apache.log4j.Logger;
 import org.dcl.acs.ACSPackage;
 import org.dcl.db.DBeContentRecordServices;
 import org.dcl.file.FindFile;
 import org.dcl.Utils.FileUtils;
 import org.dcl.Utils.ISBNUtils;
-import org.ini4j.BasicMultiMap;
-import org.ini4j.Ini;
-import org.ini4j.Profile.Section;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.vufind.ConnectionProvider;
 import org.vufind.CronLogEntry;
 import org.vufind.CronProcessLogEntry;
 import org.vufind.IProcessHandler;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
+import org.vufind.config.sections.EContentConfigOptions;
 
 
 public class EcontentAttachments implements IProcessHandler 
 {
+    private Logger logger = LoggerFactory.getLogger(CirculationProcess.class);
+
+    private Connection eContentConnection = null;
 	private DBeContentRecordServices dbEcontentRecordServices;
 	private ISBNUtils isbnUtils;
 	private FindFile findFile;
@@ -49,11 +53,9 @@ public class EcontentAttachments implements IProcessHandler
 	private int numErrors = 0;;
 	private int numCovers = 0;
 
-	private Connection conn;
 	private String vufindUrl;
 	private long logEntryId = -1;
 	private CronProcessLogEntry processLog;
-	private Logger logger;
 	
 	public EcontentAttachments(
 			DBeContentRecordServices dbEcontentRecordServices,
@@ -69,33 +71,44 @@ public class EcontentAttachments implements IProcessHandler
 	}
 	
 	public EcontentAttachments(){}
-	public void doCronProcess(String servername, 
-							  Ini configIni, 
-							  Section processSettings, 
-							  Connection vufindConn, 
-							  Connection econtentConn, 
-							  CronLogEntry cronEntry, 
-							  Logger logger) throws SQLException, IOException 
-	{
-		String vuFindUrl = configIni.get("Site", "url");
-		String source = processSettings.get("source");
-		String sourceDirectory = processSettings.get("sourcePath");
-		String libraryDirectory = configIni.get("EContent", "library");
-		String originalFolder = configIni.get("Site", "coverPath") + "/original";
-		
-		this.logger = logger;
-		this.processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Attach eContent Items");
-		
-		this.prepareRun(econtentConn, vuFindUrl, source, sourceDirectory, libraryDirectory, originalFolder);
+	public void doCronProcess(DynamicConfig config) throws SQLException, IOException
+    {
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        Connection vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+        eContentConnection = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.E_CONTENT);
+
+        processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Attach eContent Items");
+        processLog.saveToDatabase(vufindConn, logger);
+
+        vufindUrl = config.getString(BasicConfigOptions.VUFIND_URL);
+
+        Map<String, String> cmdArgs = config.getMap(BasicConfigOptions.CMD_ARGUMENTS);
+//		//String source = cmdArgs.get("source");
+		//String sourceDirectory = cmdArgs.get("source");
+		String libraryDirectory = config.getString(EContentConfigOptions.LIBRARY);
+		String originalFolder = config.getString(EContentConfigOptions.ORIGINAL_COVER_FOLDER);
+
+        PreparedStatement stmt =  eContentConnection.prepareStatement(
+                "SELECT source, attachPath " +
+                "FROM econtent_record_detection_settings " +
+                "WHERE accessType='acs' AND attachPath != '' AND attachPath IS NOT NULL");
+
+        ResultSet rs = stmt.executeQuery();
+        while(rs.next()) {
+            String source = rs.getString(1);
+            String sourceDirectory = rs.getString(2);
+            this.prepareRun(eContentConnection, vufindUrl, source, sourceDirectory, libraryDirectory, originalFolder);
+        }
 	}
+
 	public void prepareRun(Connection conn, String vufindUrl,  String source, 
 											String sourcePath, String destACSPath, 
 											String destOriginalFolder              ) throws SQLException, IOException
 	{
-		this.conn = conn;
+		this.eContentConnection = conn;
 		this.vufindUrl = vufindUrl;
 		
-		this.dbEcontentRecordServices = new DBeContentRecordServices(this.conn);
+		this.dbEcontentRecordServices = new DBeContentRecordServices(this.eContentConnection);
 		this.isbnUtils = new ISBNUtils();
 		this.findFile = new FindFile();
 		this.fileUtils = new FileUtils();
@@ -267,7 +280,7 @@ public class EcontentAttachments implements IProcessHandler
 	{
 		if(!this.testing)
 		{	
-			PreparedStatement createLogEntry; createLogEntry = this.conn.prepareStatement("INSERT INTO econtent_attach (sourcePath, dateStarted, status, source, numCovers) VALUES (?, ?, 'running', ?, ?)", PreparedStatement.RETURN_GENERATED_KEYS);
+			PreparedStatement createLogEntry; createLogEntry = this.eContentConnection.prepareStatement("INSERT INTO econtent_attach (sourcePath, dateStarted, status, source, numCovers) VALUES (?, ?, 'running', ?, ?)", PreparedStatement.RETURN_GENERATED_KEYS);
 			//Add a log entry to indicate that the source folder is being processed
 			this.addNote("Source Path: '" + this.sourcePath + "'");
 			createLogEntry.setString(1, this.sourcePath);
@@ -287,7 +300,7 @@ public class EcontentAttachments implements IProcessHandler
 	{
 		if(!this.testing)
 		{	
-			PreparedStatement updateRecordsProcessed = this.conn.prepareStatement("UPDATE econtent_attach SET recordsProcessed = ?, numErrors = ?, numCovers = ? WHERE id = ?");
+			PreparedStatement updateRecordsProcessed = this.eContentConnection.prepareStatement("UPDATE econtent_attach SET recordsProcessed = ?, numErrors = ?, numCovers = ? WHERE id = ?");
 			updateRecordsProcessed.setLong(1, this.numUpdates);
 			updateRecordsProcessed.setLong(2, this.numErrors);
 			updateRecordsProcessed.setLong(3, this.numCovers);
@@ -301,7 +314,7 @@ public class EcontentAttachments implements IProcessHandler
 		if(!this.testing)
 		{
 			PreparedStatement markLogEntryFinished = null;
-			markLogEntryFinished = this.conn.prepareStatement("UPDATE econtent_attach SET dateFinished = ?, recordsProcessed = ?, numErrors =?, notes =?, status = 'finished' WHERE id = ?");
+			markLogEntryFinished = this.eContentConnection.prepareStatement("UPDATE econtent_attach SET dateFinished = ?, recordsProcessed = ?, numErrors =?, notes =?, status = 'finished' WHERE id = ?");
 			markLogEntryFinished.setLong(1, new Date().getTime() / 1000);
 			markLogEntryFinished.setLong(2, this.numUpdates);
 			markLogEntryFinished.setLong(3, this.numErrors);
@@ -310,4 +323,9 @@ public class EcontentAttachments implements IProcessHandler
 			markLogEntryFinished.executeUpdate();
 		}
 	}
+
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[]{BasicConfigOptions.values()[0]});
+    }
 }

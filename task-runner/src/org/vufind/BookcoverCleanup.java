@@ -3,18 +3,31 @@ package org.vufind;
 import java.io.File;
 import java.io.FilenameFilter;
 import java.sql.Connection;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 
-import org.apache.log4j.Logger;
-import org.ini4j.Ini;
-import org.ini4j.Profile.Section;
+import org.joda.time.DateTime;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
+import org.vufind.config.sections.BookCoverCleanupOptions;
+import org.vufind.config.sections.ReindexListsOptions;
 
 public class BookcoverCleanup implements IProcessHandler {
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) {
+    private Logger logger = LoggerFactory.getLogger(BookcoverCleanup.class);
+
+	public void doCronProcess(DynamicConfig config) {
+
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        Connection vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+
 		CronProcessLogEntry processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Bookcover Cleanup");
 		processLog.saveToDatabase(vufindConn, logger);
 
-		String coverPath = configIni.get("Site", "coverPath");
+		String coverPath = config.getString(BookCoverCleanupOptions.COVER_PATH);
 		String[] coverPaths = new String[] { "/small", "/medium", "/large" };
 		Long currentTime = new Date().getTime();
 
@@ -35,9 +48,12 @@ public class BookcoverCleanup implements IProcessHandler {
 						return name.toLowerCase().endsWith("jpg") || name.toLowerCase().endsWith("png");
 					}
 				});
+                //TODO this should use DirectoryStream from NIO since we are dealing with so many files
+                int daysTillCoversExpire = config.getInteger(BookCoverCleanupOptions.DAYS_TILL_COVERS_EXPIRE);
+                DateTime now = new DateTime();
+                DateTime cuttoffDate = now.minusDays(daysTillCoversExpire);
 				for (File curFile : filesToCheck) {
-					//Remove any files created more than 2 weeks ago. 
-					if (curFile.lastModified() < (currentTime - 2 * 7 * 24 * 3600)) {
+					if (cuttoffDate.isAfter(curFile.lastModified())) {
 						if (curFile.delete()){
 							numFilesDeleted++;
 							processLog.incUpdated();
@@ -55,4 +71,9 @@ public class BookcoverCleanup implements IProcessHandler {
 		processLog.setFinished();
 		processLog.saveToDatabase(vufindConn, logger);
 	}
+
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[]{BasicConfigOptions.values()[0], BookCoverCleanupOptions.values()[0]});
+    }
 }

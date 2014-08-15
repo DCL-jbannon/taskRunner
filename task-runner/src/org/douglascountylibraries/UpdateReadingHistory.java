@@ -1,15 +1,16 @@
 package org.douglascountylibraries;
 
-import org.apache.log4j.Logger;
-import org.ini4j.Ini;
-import org.ini4j.Profile.Section;
+import org.joda.time.DateTime;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.vufind.CronLogEntry;
-import org.vufind.CronProcessLogEntry;
-import org.vufind.IProcessHandler;
-import org.vufind.Util;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.vufind.*;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
+import org.vufind.config.sections.ReadingHistoryConfigOptions;
 
 
 import java.io.BufferedReader;
@@ -26,10 +27,15 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Iterator;
+import java.util.List;
 
 public class UpdateReadingHistory implements IProcessHandler {
+    private Logger logger = LoggerFactory.getLogger(UpdateReadingHistory.class);
+
+    private DynamicConfig config = null;
 	private CronProcessLogEntry processLog;
 	private PreparedStatement getUsersStmt;
 	private PreparedStatement getResourceStmt;
@@ -40,12 +46,15 @@ public class UpdateReadingHistory implements IProcessHandler {
 	private String strandsApid;
 	private String vufindUrl;
 	private SimpleDateFormat checkoutDateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-	private Logger logger;
 	private boolean loadPrintHistory = true;
 	private boolean loadEcontentHistory = true;
 	private boolean loadOverdriveHistory = false;
 	
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) {
+	public void doCronProcess(DynamicConfig config) {
+        this.config = config;
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        Connection vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+
 		processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Update Reading History");
 		processLog.saveToDatabase(vufindConn, logger);
 		
@@ -53,31 +62,13 @@ public class UpdateReadingHistory implements IProcessHandler {
 		logger.info("Updating Reading History");
 		processLog.addNote("Updating Reading History");
 
-		vufindUrl = processSettings.get("vufindUrl");
-		if (vufindUrl == null || vufindUrl.length() == 0) {
-			configIni.get("Site", "url");
-		}
-		if (vufindUrl == null || vufindUrl.length() == 0) {
-			logger.error("Unable to get URL for VuFind in General settings.  Please add a vufindUrl key.");
-			processLog.incErrors();
-			processLog.addNote("Unable to get URL for VuFind in General settings.  Please add a vufindUrl key.");
-			return;
-		}
+		vufindUrl = config.getString(BasicConfigOptions.VUFIND_URL);
 
-		strandsApid = configIni.get("Strands", "APID");
-		
-		String loadPrintSetting = processSettings.get("loadPrint");
-		if (loadPrintSetting != null){
-			loadPrintHistory = loadPrintSetting.equals("true");
-		}
-		String loadEcontentSetting = processSettings.get("loadEcontent");
-		if (loadEcontentSetting != null){
-			loadEcontentHistory = loadEcontentSetting.equals("true");
-		}
-		String loadOverdriveSetting = processSettings.get("loadOverdrive");
-		if (loadOverdriveSetting != null){
-			loadOverdriveHistory = loadOverdriveSetting.equals("true");
-		}
+		strandsApid = config.getString(ReadingHistoryConfigOptions.APP_ID);
+
+        loadPrintHistory = config.getBool(ReadingHistoryConfigOptions.LOAD_PRINT);
+        loadEcontentHistory = config.getBool(ReadingHistoryConfigOptions.LOAD_ECONTENT);
+        loadEcontentHistory = config.getBool(ReadingHistoryConfigOptions.LOAD_OVERDRIVE);
 
 		// Connect to the VuFind MySQL database
 		try {
@@ -316,19 +307,22 @@ public class UpdateReadingHistory implements IProcessHandler {
 		readingHistoryStatement.setLong(1, userId);
 		readingHistoryStatement.setLong(2, resourceId);
 		ResultSet readingHistoryResult = readingHistoryStatement.executeQuery();
-		Date currentDate = new Date();
-			
+        DateTime now = new DateTime();
+
 		if (readingHistoryResult.next()) {
 			// Set the lastCheckoutDate
-			Date lastCheckoutDate = readingHistoryResult.getDate("lastCheckoutDate");
-			if (currentDate.getTime() - lastCheckoutDate.getTime() > 24 * 60 * 60 * 1000) {
-				long daysCheckedOut = readingHistoryResult.getLong("daysCheckedOut");
+            DateTime lastCheckedOut = new DateTime(readingHistoryResult.getDate("lastCheckoutDate"));
+
+
+			if (now.minusDays(1).isAfter(lastCheckedOut)) {
+				int daysCheckedOut = readingHistoryResult.getInt("daysCheckedOut");
+
 				// We have rolled to a new date, increase the
 				// daysCheckedOut and set the lastCheckOutDate to
 				// today.
 				daysCheckedOut++;
 				updateReadingHistoryStmt.setLong(1, daysCheckedOut);
-				updateReadingHistoryStmt.setDate(2, new java.sql.Date(currentDate.getTime()));
+				updateReadingHistoryStmt.setDate(2, new java.sql.Date(now.getMillis()));
 				updateReadingHistoryStmt.setLong(3, userId);
 				updateReadingHistoryStmt.setLong(4, resourceId);
 				int updateOk = updateReadingHistoryStmt.executeUpdate();
@@ -344,11 +338,11 @@ public class UpdateReadingHistory implements IProcessHandler {
 			// This is a new item in the reading history, record it.
 			insertReadingHistoryStmt.setLong(1, userId);
 			insertReadingHistoryStmt.setLong(2, resourceId);
-			insertReadingHistoryStmt.setDate(3, new java.sql.Date(currentDate.getTime()));
+			insertReadingHistoryStmt.setDate(3, new java.sql.Date(now.getMillis()));
 			
 			if(timeCheckOut == 0)
 			{
-				timeCheckOut = currentDate.getTime();
+				timeCheckOut = now.getMillis();
 			}
 			
 			insertReadingHistoryStmt.setDate(4, new java.sql.Date(timeCheckOut));
@@ -358,7 +352,8 @@ public class UpdateReadingHistory implements IProcessHandler {
 			}
 			// Make a call to strands to indicate that the item was
 			// checked out.
-			if (strandsApid != null && strandsApid.length() > 0) {
+
+			if (strandsApid != null && strandsApid.length() > 0 && config.getBool(ReadingHistoryConfigOptions.SHOULD_NOTIFY_STRANDS)) {
 				String orderid = userId + "_" + (timeCheckOut / 1000);
 				//Need to send bibid rather than resource id to strands
 				String url = "http://bizsolutions.strands.com/api2/event/purchased.sbs?needresult=true&apid=" + strandsApid + "&item=" + bibId + "::0.00::1&user=" + userId + "&orderid=" + orderid;
@@ -407,4 +402,8 @@ public class UpdateReadingHistory implements IProcessHandler {
 		return resourceId;
 	}
 
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[]{BasicConfigOptions.values()[0], ReadingHistoryConfigOptions.values()[0]});
+    }
 }

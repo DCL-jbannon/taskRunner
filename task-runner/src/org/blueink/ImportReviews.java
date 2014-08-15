@@ -1,5 +1,6 @@
 package org.blueink;
 
+import java.io.File;
 import java.io.InputStream;
 import java.io.StringReader;
 import java.net.URL;
@@ -10,22 +11,26 @@ import java.sql.SQLException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Date;
+import java.util.List;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.apache.commons.io.IOUtils;
-import org.apache.log4j.Logger;
 import org.ini4j.Ini;
 import org.ini4j.Profile.Section;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.vufind.CronLogEntry;
-import org.vufind.CronProcessLogEntry;
-import org.vufind.IProcessHandler;
-import org.vufind.Util;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.vufind.*;
+import org.vufind.config.ConfigFiller;
+import org.vufind.config.DynamicConfig;
+import org.vufind.config.I_ConfigOption;
+import org.vufind.config.sections.BasicConfigOptions;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -33,20 +38,23 @@ import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
 public class ImportReviews implements IProcessHandler{
-	private CronProcessLogEntry processLog ;
-	private Logger logger;
+    private Logger logger = LoggerFactory.getLogger(ImportReviews.class);
+
+    private CronProcessLogEntry processLog ;
 	private String vufindUrl;
 	private PreparedStatement checkForExistingReview;
 	private PreparedStatement insertNewReview;
 	private PreparedStatement updateExistingReview;
 	private SimpleDateFormat dateFormatter = new SimpleDateFormat("MM/dd/yyyy");
-	
-	public void doCronProcess(String servername, Ini configIni, Section processSettings, Connection vufindConn, Connection econtentConn, CronLogEntry cronEntry, Logger logger) {
-		this.logger = logger;
+
+    public void doCronProcess(DynamicConfig config) {
+        CronLogEntry cronEntry = CronLogEntry.getCronLogEntry();
+        Connection vufindConn = ConnectionProvider.getConnection(config, ConnectionProvider.PrintOrEContent.PRINT);
+
 		processLog = new CronProcessLogEntry(cronEntry.getLogEntryId(), "Import blueink reviews");
 		processLog.saveToDatabase(vufindConn, logger);
 		
-		vufindUrl = Util.cleanIniValue(configIni.get("Site", "url"));
+		vufindUrl = config.getString(BasicConfigOptions.VUFIND_URL);
 		
 		//Setup the Prepared Statements we will need
 		try {
@@ -71,7 +79,7 @@ public class ImportReviews implements IProcessHandler{
 		processLog.saveToDatabase(vufindConn, logger);
 	}
 
-	private void importReviewsFromFeed(String blueinkFeed) {
+    private void importReviewsFromFeed(String blueinkFeed) {
 		//Get a list of all reviews from the blueink feed
 		processLog.addNote("Loading reviews from " + blueinkFeed);
 		try {
@@ -201,6 +209,9 @@ public class ImportReviews implements IProcessHandler{
 		}
 		return recordsForIsbn;
 	}
-	
-	
+
+    @Override
+    public List<I_ConfigOption> getNeededConfigOptions() {
+        return Arrays.asList(new I_ConfigOption[]{BasicConfigOptions.values()[0]});
+    }
 }
